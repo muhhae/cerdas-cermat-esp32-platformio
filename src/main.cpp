@@ -1,3 +1,5 @@
+]4;0;#121B2A\]4;1;#8383FF\]4;2;#64DCF0\]4;3;#FFDCF3\]4;4;#8AADD3\]4;5;#9BA5EF\]4;6;#93D0F9\]4;7;#E8D3DE\]4;8;#C3B5C0\]4;9;#BCB9FF\]4;10;#F7FDFF\]4;11;#FFFFFF\]4;12;#C8DEF5\]4;13;#D4D7FF\]4;14;#F7FAFF\]4;15;#D6E2FF\]10;#E8D3DE\]11;[100]#121B2A\]12;#E8D3DE\]13;#E8D3DE\]17;#E8D3DE\]19;#121B2A\]4;232;#E8D3DE\]4;256;#E8D3DE\]708;[100]#121B2A\
+]4;0;#121B2A\]4;1;#8383FF\]4;2;#64DCF0\]4;3;#FFDCF3\]4;4;#8AADD3\]4;5;#9BA5EF\]4;6;#93D0F9\]4;7;#E8D3DE\]4;8;#C3B5C0\]4;9;#BCB9FF\]4;10;#F7FDFF\]4;11;#FFFFFF\]4;12;#C8DEF5\]4;13;#D4D7FF\]4;14;#F7FAFF\]4;15;#D6E2FF\]10;#E8D3DE\]11;[100]#121B2A\]12;#E8D3DE\]13;#E8D3DE\]17;#E8D3DE\]19;#121B2A\]4;232;#E8D3DE\]4;256;#E8D3DE\]708;[100]#121B2A\
 #include "HardwareSerial.h"
 #include "esp32-hal-gpio.h"
 #include "esp32-hal-timer.h"
@@ -7,13 +9,14 @@
 #include <cstdint>
 #include <sys/types.h>
 
-const uint8_t buzzer = 14;
-
 const uint8_t selectors[3] = {15, 22, 23};
 const uint8_t segments[7] = {4, 33, 32, 21, 19, 18, 5};
 
 const uint64_t displayFrequency = 120;
 const uint64_t checkingInterval = 150;
+const uint8_t buzzerPin = 14;
+
+bool pressed = false;
 
 hw_timer_t *dispTimer = NULL;
 
@@ -37,6 +40,7 @@ enum State {
     READY,
     WAIT,
     SCORING,
+    FORCE_SHOW_SCORE,
     FINISH,
 };
 
@@ -56,11 +60,6 @@ enum Team {
 volatile State currentState = WAIT;
 volatile Team answeringTeam;
 volatile bool wrongOnce = false;
-volatile bool showScore = false;
-volatile uint8_t resetButtonCount = 0;
-
-volatile uint64_t lastTimeResetPressed = 0;
-volatile uint64_t currentTimeResetPressed = 0;
 
 volatile uint8_t score[3] = {0, 0, 0};
 
@@ -103,6 +102,7 @@ void setup() {
         digitalWrite(pin, LOW);
     }
     for (auto btn : buttons) pinMode(btn->pin, INPUT);
+    pinMode(buzzerPin, OUTPUT);
 
     checkLed();
     checkPattern();
@@ -122,53 +122,34 @@ void setup() {
     attachInterrupt(btnReset.pin, btnResetCallback, FALLING);
 }
 
+void buzz() {
+    digitalWrite(buzzerPin, HIGH);
+    delay(100);
+    digitalWrite(buzzerPin, LOW);
+
+}
+
+
 void loop() {
+    if (pressed) {
+        buzz();
+        pressed = false;
+    }
+    //Serial.printf(
+    //    "\nA %d B %d C %d Benar %d Salah %d Reset %d\n",
+    //    digitalRead(btnA.pin),
+    //    digitalRead(btnB.pin),
+    //    digitalRead(btnC.pin),
+    //    digitalRead(btnBenar.pin),
+    //    digitalRead(btnSalah.pin),
+    //    digitalRead(btnReset.pin)
+    //);
+
     static uint64_t now = 0;
     static uint64_t prev = 0;
     static uint64_t count = 0;
+
     count++;
-
-    if (resetButtonCount == 2) {
-        showScore = true;
-        resetButtonCount = 0;
-    } else if (millis() - lastTimeResetPressed > 500) {
-        if (resetButtonCount == 1) {
-            if (showScore) showScore = false;
-            else {
-                switch (currentState) {
-                case WAIT:
-                    currentState = READY;
-                    break;
-                case FINISH:
-                    currentState = WAIT;
-                    score[0] = 0;
-                    score[1] = 0;
-                    score[2] = 0;
-                    break;
-                }
-            }
-
-        }
-        resetButtonCount = 0;
-    }
-    // Serial.printf(
-    //     "\nA %d B %d C %d Benar %d Salah %d Reset %d\n",
-    //     digitalRead(btnA.pin),
-    //     digitalRead(btnB.pin),
-    //     digitalRead(btnC.pin),
-    //     digitalRead(btnBenar.pin),
-    //     digitalRead(btnSalah.pin),
-    //     digitalRead(btnReset.pin)
-    // );
-
-    Serial.printf("showScore %d\n", showScore);
-
-    if (showScore) {
-        number[0] = score[0];
-        number[1] = score[1];
-        number[2] = score[2];
-        return;
-    }
 
     switch (currentState) {
     case READY:
@@ -297,33 +278,24 @@ void setupDisplayTimer() {
     timerAlarmEnable(dispTimer);
 }
 
-void buzz(int frequency = NOTE_A, int duration = 500) {
-    tone(buzzer, frequency);
-    delay(duration * 0.7);
-    noTone(buzzer);
-    delay(20); // brief pause for fade-out effect
-    tone(buzzer, frequency);
-    delay(duration * 0.3);
-    noTone(buzzer);
-}
-
 void IRAM_ATTR btnACallback() {
     if (currentState != READY || !btnA.enabled) return;
     answeringTeam = TEAM_A;
     currentState = SCORING;
-    buzz();
+    pressed = true;
+
 }
 void IRAM_ATTR btnBCallback() {
     if (currentState != READY || !btnB.enabled) return;
     answeringTeam = TEAM_B;
     currentState = SCORING;
-    buzz();
+    pressed = true;
 }
 void IRAM_ATTR btnCCallback() {
     if (currentState != READY || !btnC.enabled) return;
     answeringTeam = TEAM_C;
     currentState = SCORING;
-    buzz();
+    pressed = true;
 }
 void IRAM_ATTR btnBenarCallback() {
     if (currentState != SCORING) return;
@@ -337,11 +309,16 @@ void IRAM_ATTR btnSalahCallback() {
     currentState = wrongOnce ? WAIT : READY;
     wrongOnce = true;
 }
-
 void IRAM_ATTR btnResetCallback() {
-    currentTimeResetPressed = millis();
-    if (currentTimeResetPressed - lastTimeResetPressed <= 500) {
-        resetButtonCount++;
+    switch (currentState) {
+    case WAIT:
+        currentState = READY;
+        break;
+    case FINISH:
+        currentState = WAIT;
+        score[0] = 0;
+        score[1] = 0;
+        score[2] = 0;
+        break;
     }
-    lastTimeResetPressed = currentTimeResetPressed;
 }
